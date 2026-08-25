@@ -32,6 +32,10 @@ provider during collection or refresh:
 | Claude Code | `https://api.anthropic.com/api/oauth/usage` |
 | Codex / ChatGPT | `https://chatgpt.com/backend-api/wham/usage` |
 
+Claude Code and Codex both expose a rolling five-hour window and a weekly
+window; each is shown as a separate limit, labelled `Session` and `Weekly`. A
+window that the account's plan does not report is omitted.
+
 Requests use credentials already managed by the corresponding official CLI.
 Credentials are held in memory for the request and are not logged or written by
 `agent-usage`. Gemini CLI does not expose quota details, so no Gemini account

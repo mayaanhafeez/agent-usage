@@ -25,8 +25,8 @@ history with available account limits, and presents everything in one TUI.
 | Agent | Local usage source | Account limit source |
 | --- | --- | --- |
 | Claude Code | `~/.claude/projects/**/*.jsonl` | Anthropic Claude OAuth usage endpoint |
-| Codex | `~/.codex/sessions/**/*.jsonl` | ChatGPT Codex usage endpoint |
-| OpenCode | OpenCode's local SQLite database | ChatGPT quota when GPT models and a Codex login are detected |
+| Codex | `~/.codex/sessions/**/*.jsonl` | ChatGPT Codex usage endpoint (5-hour and weekly) |
+| OpenCode | OpenCode's local SQLite database | ChatGPT quotas when GPT models and a Codex login are detected |
 | Gemini CLI | `~/.gemini/tmp/**/chats/*.json` | Not exposed by Gemini CLI |
 
 See [Data sources and privacy](docs/data-sources.md) for the exact files,
