@@ -401,15 +401,59 @@ fn apply_chatgpt_account(snapshot: &mut Snapshot, codex_dir: &Path) {
         "https://chatgpt.com/backend-api/wham/usage",
         token,
         &headers,
-    ) && let Some(window) = raw.pointer("/rate_limit/primary_window")
-        && let Some(percent) = window.get("used_percent").and_then(Value::as_f64)
-    {
-        snapshot.limits.push(Limit {
-            label: "Weekly".into(),
-            percent: percent.round().clamp(0.0, 100.0) as u16,
-            resets: reset_after(window),
-        });
+    ) {
+        snapshot.limits.extend(chatgpt_limits(&raw));
     }
+}
+
+/// ChatGPT reports a short rolling window and a weekly window; either may be
+/// absent depending on the plan, and their order is not guaranteed.
+fn chatgpt_limits(raw: &Value) -> Vec<Limit> {
+    let mut windows: Vec<(i64, Limit)> = Vec::new();
+    for (pointer, assumed_minutes) in [
+        ("/rate_limit/primary_window", 5 * 60),
+        ("/rate_limit/secondary_window", 7 * 24 * 60),
+    ] {
+        let Some(window) = raw.pointer(pointer) else {
+            continue;
+        };
+        let Some(percent) = window_percent(window) else {
+            continue;
+        };
+        let minutes = window_minutes(window).unwrap_or(assumed_minutes);
+        windows.push((
+            minutes,
+            Limit {
+                label: if minutes < 24 * 60 {
+                    "Session"
+                } else {
+                    "Weekly"
+                }
+                .into(),
+                percent,
+                resets: reset_after(window),
+            },
+        ));
+    }
+    windows.sort_by_key(|(minutes, _)| *minutes);
+    windows.dedup_by(|left, right| left.1.label == right.1.label);
+    windows.into_iter().map(|(_, limit)| limit).collect()
+}
+
+fn window_minutes(window: &Value) -> Option<i64> {
+    window
+        .get("window_minutes")
+        .and_then(Value::as_i64)
+        .or_else(|| {
+            [
+                "window_size_seconds",
+                "window_duration_seconds",
+                "window_seconds",
+            ]
+            .into_iter()
+            .find_map(|key| window.get(key).and_then(Value::as_i64))
+            .map(|seconds| seconds / 60)
+        })
 }
 
 fn display_opencode_model(model: &str) -> String {
@@ -544,9 +588,9 @@ fn window_reset(window: &Value) -> Option<String> {
 }
 
 fn reset_after(window: &Value) -> Option<String> {
-    window
-        .get("reset_after_seconds")
-        .and_then(Value::as_i64)
+    ["reset_after_seconds", "resets_in_seconds"]
+        .into_iter()
+        .find_map(|key| window.get(key).and_then(Value::as_i64))
         .map(human_duration)
         .or_else(|| {
             window
@@ -588,6 +632,57 @@ mod tests {
             window_percent(&serde_json::json!({"used": 3, "limit": 4})),
             Some(75)
         );
+    }
+
+    #[test]
+    fn chatgpt_reports_session_and_weekly_windows() {
+        let raw = serde_json::json!({
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 12,
+                    "window_minutes": 300,
+                    "resets_in_seconds": 3_600
+                },
+                "secondary_window": {
+                    "used_percent": 64,
+                    "window_minutes": 10_080,
+                    "resets_in_seconds": 4 * 86_400
+                }
+            }
+        });
+        let limits = chatgpt_limits(&raw);
+        assert_eq!(limits.len(), 2);
+        assert_eq!(limits[0].label, "Session");
+        assert_eq!(limits[0].percent, 12);
+        assert_eq!(limits[0].resets.as_deref(), Some("1h 0m"));
+        assert_eq!(limits[1].label, "Weekly");
+        assert_eq!(limits[1].percent, 64);
+    }
+
+    #[test]
+    fn chatgpt_windows_are_labelled_by_duration_not_position() {
+        let raw = serde_json::json!({
+            "rate_limit": {
+                "primary_window": {"used_percent": 64, "window_minutes": 10_080},
+                "secondary_window": {"used_percent": 12, "window_minutes": 300}
+            }
+        });
+        let limits = chatgpt_limits(&raw);
+        assert_eq!(limits.len(), 2);
+        assert_eq!(limits[0].label, "Session");
+        assert_eq!(limits[0].percent, 12);
+        assert_eq!(limits[1].label, "Weekly");
+    }
+
+    #[test]
+    fn chatgpt_falls_back_to_window_position_without_durations() {
+        let raw = serde_json::json!({
+            "rate_limit": {"primary_window": {"used_percent": 30}}
+        });
+        let limits = chatgpt_limits(&raw);
+        assert_eq!(limits.len(), 1);
+        assert_eq!(limits[0].label, "Session");
+        assert_eq!(limits[0].percent, 30);
     }
 
     #[test]
